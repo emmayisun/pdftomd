@@ -7,6 +7,8 @@ AMC Seat Monitor - 监视 AMC 电影院座位取消情况
   python amc_seat_monitor.py --config showtimes.json --interval 30
 """
 
+from __future__ import annotations
+
 import argparse
 import json
 import re
