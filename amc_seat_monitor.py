@@ -78,47 +78,59 @@ class NotifyConfig:
 
 # ─── AMC API ──────────────────────────────────────────────────────────────────
 
+def get_showtime_details(showtime_id: str) -> Optional[dict]:
+    """Step 1: 获取 showtime 详情，含 theatreId 和 performanceNumber"""
+    url = f"{AMC_API_BASE}/v2/showtimes/{showtime_id}"
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        tprint(f"[错误] 获取 showtime {showtime_id} 详情失败: {e}")
+        return None
+
+
 def get_seat_map(theatre_id: Optional[str], showtime_id: str) -> Optional[dict]:
-    candidates = [
-        f"{AMC_API_BASE}/v2/showtimes/{showtime_id}/seat-map",
-        f"{AMC_API_BASE}/v1/showtimes/{showtime_id}/seat-map",
-    ]
-    if theatre_id:
-        candidates += [
-            f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}/seat-map",
-            f"{AMC_API_BASE}/v1/theatres/{theatre_id}/showtimes/{showtime_id}/seat-map",
-        ]
-    for url in candidates:
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=15)
-            if resp.status_code == 404:
-                continue
-            resp.raise_for_status()
-            return resp.json()
-        except requests.exceptions.HTTPError as e:
-            tprint(f"[错误] {showtime_id} 请求失败: {e}")
+    """Step 2: 获取座位图。先从 showtime 详情中取 theatreId/performanceNumber，再调用 seating-layouts"""
+    details = get_showtime_details(showtime_id)
+    if details is None:
+        return None
+
+    # 从 showtime 详情中提取所需字段
+    perf_num = details.get("performanceNumber") or details.get("vistaPerformanceNumber")
+    t_id = str(details.get("theatreId") or details.get("theatre", {}).get("id") or theatre_id or "")
+
+    # 优先使用 HATEOAS link
+    layout_url = None
+    links = details.get("_links", {})
+    for key, val in links.items():
+        if "seating-layout" in key:
+            layout_url = val.get("href")
+            break
+
+    if not layout_url:
+        if t_id and perf_num:
+            layout_url = f"{AMC_API_BASE}/v3/seating-layouts/{t_id}/{perf_num}"
+        else:
+            tprint(f"[错误] {showtime_id}: 无法确定 seating-layout URL (theatreId={t_id}, perf={perf_num})")
             return None
-        except Exception as e:
-            tprint(f"[错误] {showtime_id} 请求异常: {e}")
-            return None
-    return None
+
+    try:
+        resp = requests.get(layout_url, headers=HEADERS, timeout=15)
+        resp.raise_for_status()
+        return resp.json()
+    except Exception as e:
+        tprint(f"[错误] {showtime_id} 座位图请求失败: {e} — URL: {layout_url}")
+        return None
 
 
 def get_showtime_info(theatre_id: Optional[str], showtime_id: str) -> str:
-    for url in [f"{AMC_API_BASE}/v2/showtimes/{showtime_id}"] + (
-        [f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}"] if theatre_id else []
-    ):
-        try:
-            resp = requests.get(url, headers=HEADERS, timeout=10)
-            if resp.status_code == 404:
-                continue
-            data = resp.json()
-            movie = data.get("movieName") or data.get("movie", {}).get("name", "未知电影")
-            show_time = data.get("showDateTimeLocal") or data.get("showDateTime", "")
-            return f"{movie} @ {show_time}"
-        except Exception:
-            continue
-    return f"Showtime {showtime_id}"
+    details = get_showtime_details(showtime_id)
+    if not details:
+        return f"Showtime {showtime_id}"
+    movie = details.get("movieName") or details.get("movie", {}).get("name", "未知电影")
+    show_time = details.get("showDateTimeLocal") or details.get("showDateTime", "")
+    return f"{movie} @ {show_time}"
 
 
 # ─── 座位解析与过滤 ───────────────────────────────────────────────────────────
@@ -127,24 +139,49 @@ def extract_available_seats(seat_map: dict) -> "dict[str, list[int]]":
     """
     返回 {row: [seat_numbers...]} 的字典，只包含可用座位。
     seat_numbers 已排序。
+
+    支持两种 API 响应格式：
+    - v3 seating-layouts: flat seats list，seatName="G7", available=true
+    - 旧版 seat-map: nested rows/seats
     """
     rows_data = {}  # type: dict[str, list[int]]
+
+    # v3 seating-layouts 格式：{"seats": [...], "rows": int, "columns": int}
+    seats_flat = seat_map.get("seats")
+    if isinstance(seats_flat, list) and seats_flat and isinstance(seats_flat[0], dict) and "seatName" in seats_flat[0]:
+        for seat in seats_flat:
+            if not seat.get("available", False):
+                continue
+            seat_name = seat.get("seatName", "").strip()
+            # seatName 格式: "G7" 或 "G12"（首字母为排，其余为号码）
+            m = re.match(r"^([A-Za-z]+)(\d+)$", seat_name)
+            if not m:
+                continue
+            row_id = m.group(1).upper()
+            seat_num = int(m.group(2))
+            rows_data.setdefault(row_id, []).append(seat_num)
+        for row_id in rows_data:
+            rows_data[row_id].sort()
+        return rows_data
+
+    # 旧版嵌套格式
     rows = seat_map.get("rows") or seat_map.get("_embedded", {}).get("rows", [])
-    for row in rows:
-        for seat in row.get("seats", []):
-            status = (seat.get("status") or seat.get("seatStatus") or "").upper()
-            if status in ("AVAILABLE", "OPEN", "A"):
-                row_id = (
-                    seat.get("rowId") or seat.get("row") or row.get("rowId", "?")
-                ).upper().strip()
+    if isinstance(rows, list):
+        for row in rows:
+            for seat in row.get("seats", []):
+                status = (seat.get("status") or seat.get("seatStatus") or "").upper()
+                if status not in ("AVAILABLE", "OPEN", "A"):
+                    continue
+                row_id = (seat.get("rowId") or seat.get("row") or row.get("rowId", "?")).upper().strip()
                 seat_num_raw = seat.get("number") or seat.get("seatNumber") or seat.get("id")
                 try:
                     seat_num = int(seat_num_raw)
                 except (TypeError, ValueError):
                     continue
                 rows_data.setdefault(row_id, []).append(seat_num)
-    for row_id in rows_data:
-        rows_data[row_id].sort()
+        for row_id in rows_data:
+            rows_data[row_id].sort()
+
     return rows_data
 
 
