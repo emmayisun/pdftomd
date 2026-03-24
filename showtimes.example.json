@@ -1,14 +1,14 @@
 [
-  {"theatre_id": "6238", "showtime_id": "11111111", "label": "工作日周一6pm"},
-  {"theatre_id": "6238", "showtime_id": "22222222", "label": "工作日周二6pm"},
-  {"theatre_id": "6238", "showtime_id": "33333333", "label": "工作日周三6pm"},
-  {"theatre_id": "6238", "showtime_id": "44444444", "label": "工作日周四6pm"},
-  {"theatre_id": "6238", "showtime_id": "55555555", "label": "周六10am"},
-  {"theatre_id": "6238", "showtime_id": "66666666", "label": "周六1pm"},
-  {"theatre_id": "6238", "showtime_id": "77777777", "label": "周六4pm"},
-  {"theatre_id": "6238", "showtime_id": "88888888", "label": "周六7pm"},
-  {"theatre_id": "6238", "showtime_id": "99999999", "label": "周日10am"},
-  {"theatre_id": "6238", "showtime_id": "10101010", "label": "周日1pm"},
-  {"theatre_id": "6238", "showtime_id": "11001100", "label": "周日4pm"},
-  {"theatre_id": "6238", "showtime_id": "12001200", "label": "周日7pm"}
+  {"showtime_id": "140796601", "label": "工作日周一6pm"},
+  {"showtime_id": "140796602", "label": "工作日周二6pm"},
+  {"showtime_id": "140796603", "label": "工作日周三6pm"},
+  {"showtime_id": "140796604", "label": "工作日周四6pm"},
+  {"showtime_id": "140796610", "label": "周六10am"},
+  {"showtime_id": "140796611", "label": "周六1pm"},
+  {"showtime_id": "140796612", "label": "周六4pm"},
+  {"showtime_id": "140796613", "label": "周六7pm"},
+  {"showtime_id": "140796620", "label": "周日10am"},
+  {"showtime_id": "140796621", "label": "周日1pm"},
+  {"showtime_id": "140796622", "label": "周日4pm"},
+  {"showtime_id": "140796623", "label": "周日7pm"}
 ]

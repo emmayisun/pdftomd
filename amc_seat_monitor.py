@@ -55,14 +55,16 @@ def tprint(*args, **kwargs):
 
 @dataclass
 class ShowtimeConfig:
-    theatre_id: str
     showtime_id: str
+    theatre_id: str = ""     # 新版 AMC URL 不需要，可留空
     label: str = ""          # 可选的自定义名称，如 "周六下午场"
 
     def display_name(self) -> str:
         if self.label:
-            return f"{self.label} (T:{self.theatre_id}/S:{self.showtime_id})"
-        return f"Theatre {self.theatre_id} / Showtime {self.showtime_id}"
+            return f"{self.label} (S:{self.showtime_id})"
+        if self.theatre_id:
+            return f"Theatre {self.theatre_id} / Showtime {self.showtime_id}"
+        return f"Showtime {self.showtime_id}"
 
 
 @dataclass
@@ -76,10 +78,23 @@ class NotifyConfig:
 
 # ─── AMC API ─────────────────────────────────────────────────────────────────
 
-def get_seat_map(theatre_id: str, showtime_id: str) -> dict | None:
-    """获取座位图数据"""
-    for version in ("v2", "v1"):
-        url = f"{AMC_API_BASE}/{version}/theatres/{theatre_id}/showtimes/{showtime_id}/seat-map"
+def get_seat_map(theatre_id: str | None, showtime_id: str) -> dict | None:
+    """获取座位图数据，支持新版（仅 showtime_id）和旧版（theatre_id + showtime_id）URL"""
+    candidates = []
+    # 新版 AMC 网站格式：/showtimes/{id}/seats
+    candidates += [
+        f"{AMC_API_BASE}/v2/showtimes/{showtime_id}/seat-map",
+        f"{AMC_API_BASE}/v1/showtimes/{showtime_id}/seat-map",
+    ]
+    # 旧版格式：需要 theatre_id
+    if theatre_id:
+        candidates += [
+            f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}/seat-map",
+            f"{AMC_API_BASE}/v1/theatres/{theatre_id}/showtimes/{showtime_id}/seat-map",
+        ]
+
+    label = showtime_id if not theatre_id else f"{theatre_id}/{showtime_id}"
+    for url in candidates:
         try:
             resp = requests.get(url, headers=HEADERS, timeout=15)
             if resp.status_code == 404:
@@ -87,10 +102,10 @@ def get_seat_map(theatre_id: str, showtime_id: str) -> dict | None:
             resp.raise_for_status()
             return resp.json()
         except requests.exceptions.HTTPError as e:
-            tprint(f"[错误] {theatre_id}/{showtime_id} 座位图请求失败: {e}")
+            tprint(f"[错误] {label} 座位图请求失败: {e}")
             return None
         except Exception as e:
-            tprint(f"[错误] {theatre_id}/{showtime_id} 请求异常: {e}")
+            tprint(f"[错误] {label} 请求异常: {e}")
             return None
     return None
 
@@ -109,17 +124,23 @@ def extract_available_seats(seat_map: dict) -> set[str]:
     return available
 
 
-def get_showtime_info(theatre_id: str, showtime_id: str) -> str:
+def get_showtime_info(theatre_id: str | None, showtime_id: str) -> str:
     """获取场次基本信息"""
-    url = f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}"
-    try:
-        resp = requests.get(url, headers=HEADERS, timeout=10)
-        data = resp.json()
-        movie = data.get("movieName") or data.get("movie", {}).get("name", "未知电影")
-        show_time = data.get("showDateTimeLocal") or data.get("showDateTime", "")
-        return f"{movie} @ {show_time}"
-    except Exception:
-        return f"Theatre {theatre_id} / Showtime {showtime_id}"
+    candidates = [f"{AMC_API_BASE}/v2/showtimes/{showtime_id}"]
+    if theatre_id:
+        candidates.append(f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}")
+    for url in candidates:
+        try:
+            resp = requests.get(url, headers=HEADERS, timeout=10)
+            if resp.status_code == 404:
+                continue
+            data = resp.json()
+            movie = data.get("movieName") or data.get("movie", {}).get("name", "未知电影")
+            show_time = data.get("showDateTimeLocal") or data.get("showDateTime", "")
+            return f"{movie} @ {show_time}"
+        except Exception:
+            continue
+    return f"Showtime {showtime_id}"
 
 
 # ─── 通知 ─────────────────────────────────────────────────────────────────────
@@ -177,7 +198,8 @@ def notify_email(label: str, new_seats: set[str], total: int, cfg: NotifyConfig)
 def monitor_one(showtime: ShowtimeConfig, interval: int, notify_cfg: NotifyConfig,
                 stop_event: threading.Event):
     """监控单个场次，在独立线程中运行"""
-    info = get_showtime_info(showtime.theatre_id, showtime.showtime_id)
+    theatre_id = showtime.theatre_id or None
+    info = get_showtime_info(theatre_id, showtime.showtime_id)
     label = showtime.label or info
     tprint(f"[启动] {label}")
 
@@ -185,7 +207,7 @@ def monitor_one(showtime: ShowtimeConfig, interval: int, notify_cfg: NotifyConfi
 
     while not stop_event.is_set():
         now = datetime.now().strftime("%H:%M:%S")
-        seat_map = get_seat_map(showtime.theatre_id, showtime.showtime_id)
+        seat_map = get_seat_map(theatre_id, showtime.showtime_id)
 
         if seat_map is None:
             tprint(f"[{now}] [{label}] 获取失败，{interval}s 后重试")
@@ -229,10 +251,16 @@ def parse_amc_url(url: str) -> tuple[str | None, str | None]:
 def load_config_file(path: str) -> list[ShowtimeConfig]:
     """
     加载 JSON 配置文件，格式示例:
+
+    新版（推荐，直接从 URL 取 showtime_id）:
     [
-      {"theatre_id": "6238", "showtime_id": "11111111", "label": "周六 10am"},
-      {"theatre_id": "6238", "showtime_id": "22222222", "label": "周六 2pm"},
-      {"theatre_id": "6238", "showtime_id": "33333333"}
+      {"showtime_id": "140796602", "label": "周六 10am"},
+      {"showtime_id": "140796603", "label": "周六 2pm"}
+    ]
+
+    旧版（同时提供 theatre_id）:
+    [
+      {"theatre_id": "6238", "showtime_id": "11111111", "label": "周六 10am"}
     ]
     """
     with open(path) as f:
@@ -240,8 +268,8 @@ def load_config_file(path: str) -> list[ShowtimeConfig]:
     showtimes = []
     for item in data:
         showtimes.append(ShowtimeConfig(
-            theatre_id=str(item["theatre_id"]),
             showtime_id=str(item["showtime_id"]),
+            theatre_id=str(item.get("theatre_id", "")),
             label=item.get("label", ""),
         ))
     return showtimes
@@ -260,10 +288,9 @@ def main():
 
   # 多场次（命令行）
   python amc_seat_monitor.py \\
-      --showtime 6238:11111111:"工作日6pm场" \\
-      --showtime 6238:22222222:"周六上午场" \\
-      --showtime 6238:33333333:"周六下午场" \\
-      --showtime 6238:44444444:"周日全天场"
+      --showtime 140796602:"工作日6pm场" \\
+      --showtime 140796603:"周六上午场" \\
+      --showtime 140796604:"周日下午场"
 
   # 多场次（JSON 配置文件，推荐）
   python amc_seat_monitor.py --config showtimes.json --interval 30
@@ -274,24 +301,23 @@ def main():
       --smtp-user you@gmail.com \\
       --smtp-pass "xxxx xxxx xxxx xxxx"
 
-showtimes.json 格式:
+showtimes.json 格式（新版，只需 showtime_id）:
   [
-    {"theatre_id": "6238", "showtime_id": "11111111", "label": "工作日6pm"},
-    {"theatre_id": "6238", "showtime_id": "22222222", "label": "周六10am"},
-    {"theatre_id": "6238", "showtime_id": "33333333", "label": "周六2pm"},
-    {"theatre_id": "6238", "showtime_id": "44444444", "label": "周日全天"}
+    {"showtime_id": "140796602", "label": "工作日6pm"},
+    {"showtime_id": "140796603", "label": "周六10am"},
+    {"showtime_id": "140796604", "label": "周六2pm"}
   ]
 
-如何找到 Theatre ID 和 Showtime ID:
-  在 AMC 选座页面按 F12 -> Network -> 搜索 "seat-map"
-  URL 格式: /v2/theatres/{theatreId}/showtimes/{showtimeId}/seat-map
+如何找到 Showtime ID:
+  选座页面 URL: https://www.amctheatres.com/showtimes/{showtime_id}/seats
+  直接复制 URL 里的数字即可！
         """
     )
 
     # 输入方式
     parser.add_argument("--config", help="JSON 配置文件路径（多场次推荐）")
-    parser.add_argument("--showtime", action="append", metavar="THEATRE:SHOWTIME[:LABEL]",
-                        help="场次，格式 theatreId:showtimeId 或 theatreId:showtimeId:标签，可重复")
+    parser.add_argument("--showtime", action="append", metavar="SHOWTIME_ID[:LABEL]",
+                        help="场次 ID（可选加标签），如 140796602 或 140796602:周六下午场，可重复")
     parser.add_argument("--theatre-id", help="单场次影院 ID")
     parser.add_argument("--showtime-id", help="单场次场次 ID")
     parser.add_argument("--url", help="AMC 选座页面 URL（自动解析 ID）")
@@ -317,28 +343,28 @@ showtimes.json 格式:
 
     if args.showtime:
         for s in args.showtime:
-            parts = s.split(":", 2)
-            if len(parts) < 2:
-                print(f"[错误] --showtime 格式应为 theatreId:showtimeId，收到: {s}")
-                sys.exit(1)
+            parts = s.split(":", 1)
             showtimes.append(ShowtimeConfig(
-                theatre_id=parts[0],
-                showtime_id=parts[1],
-                label=parts[2] if len(parts) > 2 else "",
+                showtime_id=parts[0],
+                label=parts[1] if len(parts) > 1 else "",
             ))
 
     # 单场次参数
-    theatre_id = args.theatre_id
     showtime_id = args.showtime_id
+    theatre_id = args.theatre_id
     if args.url:
         t, s = parse_amc_url(args.url)
         theatre_id = theatre_id or t
         showtime_id = showtime_id or s
-    if theatre_id and showtime_id:
-        showtimes.append(ShowtimeConfig(theatre_id, showtime_id, args.label))
+    if showtime_id:
+        showtimes.append(ShowtimeConfig(
+            showtime_id=showtime_id,
+            theatre_id=theatre_id or "",
+            label=args.label,
+        ))
 
     if not showtimes:
-        print("错误: 请至少提供一个场次（--showtime / --config / --theatre-id+--showtime-id）")
+        print("错误: 请至少提供一个场次（--showtime-id / --showtime / --config）")
         parser.print_help()
         sys.exit(1)
 
