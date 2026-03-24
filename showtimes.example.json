@@ -1,0 +1,14 @@
+[
+  {"theatre_id": "6238", "showtime_id": "11111111", "label": "工作日周一6pm"},
+  {"theatre_id": "6238", "showtime_id": "22222222", "label": "工作日周二6pm"},
+  {"theatre_id": "6238", "showtime_id": "33333333", "label": "工作日周三6pm"},
+  {"theatre_id": "6238", "showtime_id": "44444444", "label": "工作日周四6pm"},
+  {"theatre_id": "6238", "showtime_id": "55555555", "label": "周六10am"},
+  {"theatre_id": "6238", "showtime_id": "66666666", "label": "周六1pm"},
+  {"theatre_id": "6238", "showtime_id": "77777777", "label": "周六4pm"},
+  {"theatre_id": "6238", "showtime_id": "88888888", "label": "周六7pm"},
+  {"theatre_id": "6238", "showtime_id": "99999999", "label": "周日10am"},
+  {"theatre_id": "6238", "showtime_id": "10101010", "label": "周日1pm"},
+  {"theatre_id": "6238", "showtime_id": "11001100", "label": "周日4pm"},
+  {"theatre_id": "6238", "showtime_id": "12001200", "label": "周日7pm"}
+]
