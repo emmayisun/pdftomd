@@ -83,7 +83,9 @@ def get_showtime_details(showtime_id: str) -> Optional[dict]:
     url = f"{AMC_API_BASE}/v2/showtimes/{showtime_id}"
     try:
         resp = requests.get(url, headers=HEADERS, timeout=15)
-        resp.raise_for_status()
+        if not resp.ok:
+            tprint(f"[错误] 获取 showtime {showtime_id} 详情失败: HTTP {resp.status_code} — {resp.text[:300]}")
+            return None
         return resp.json()
     except Exception as e:
         tprint(f"[错误] 获取 showtime {showtime_id} 详情失败: {e}")
