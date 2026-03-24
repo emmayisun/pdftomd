@@ -18,6 +18,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from email.mime.text import MIMEText
+from typing import Optional
 
 import requests
 
@@ -75,7 +76,7 @@ class NotifyConfig:
 
 # ─── AMC API ──────────────────────────────────────────────────────────────────
 
-def get_seat_map(theatre_id: str | None, showtime_id: str) -> dict | None:
+def get_seat_map(theatre_id: Optional[str], showtime_id: str) -> Optional[dict]:
     candidates = [
         f"{AMC_API_BASE}/v2/showtimes/{showtime_id}/seat-map",
         f"{AMC_API_BASE}/v1/showtimes/{showtime_id}/seat-map",
@@ -101,7 +102,7 @@ def get_seat_map(theatre_id: str | None, showtime_id: str) -> dict | None:
     return None
 
 
-def get_showtime_info(theatre_id: str | None, showtime_id: str) -> str:
+def get_showtime_info(theatre_id: Optional[str], showtime_id: str) -> str:
     for url in [f"{AMC_API_BASE}/v2/showtimes/{showtime_id}"] + (
         [f"{AMC_API_BASE}/v2/theatres/{theatre_id}/showtimes/{showtime_id}"] if theatre_id else []
     ):
@@ -120,12 +121,12 @@ def get_showtime_info(theatre_id: str | None, showtime_id: str) -> str:
 
 # ─── 座位解析与过滤 ───────────────────────────────────────────────────────────
 
-def extract_available_seats(seat_map: dict) -> dict[str, list[int]]:
+def extract_available_seats(seat_map: dict) -> "dict[str, list[int]]":
     """
     返回 {row: [seat_numbers...]} 的字典，只包含可用座位。
     seat_numbers 已排序。
     """
-    rows_data: dict[str, list[int]] = {}
+    rows_data = {}  # type: dict[str, list[int]]
     rows = seat_map.get("rows") or seat_map.get("_embedded", {}).get("rows", [])
     for row in rows:
         for seat in row.get("seats", []):
@@ -154,7 +155,7 @@ def find_adjacent_pairs(seat_nums: list[int]) -> list[tuple[int, int]]:
     return pairs
 
 
-def check_filter(available: dict[str, list[int]], seat_filter: SeatFilter) -> list[str]:
+def check_filter(available, seat_filter: SeatFilter):
     """
     检查当前可用座位是否满足过滤条件。
     返回满足条件的座位描述列表（空列表 = 不满足）。
@@ -177,7 +178,7 @@ def check_filter(available: dict[str, list[int]], seat_filter: SeatFilter) -> li
     return results
 
 
-def seats_to_flat_set(available: dict[str, list[int]]) -> set[str]:
+def seats_to_flat_set(available):
     """把行列字典转成 flat set 用于比较变化"""
     result = set()
     for row_id, nums in available.items():
@@ -247,7 +248,7 @@ def monitor_one(showtime: ShowtimeConfig, seat_filter: SeatFilter, interval: int
     label = showtime.label or info
     tprint(f"[启动] {label}")
 
-    prev_flat: set[str] | None = None
+    prev_flat = None  # Optional[set[str]]
     was_notified = False  # 避免重复通知同一状态
 
     while not stop_event.is_set():
@@ -323,7 +324,7 @@ def monitor_one(showtime: ShowtimeConfig, seat_filter: SeatFilter, interval: int
 
 # ─── 解析输入 ─────────────────────────────────────────────────────────────────
 
-def parse_amc_url(url: str) -> tuple[str | None, str | None]:
+def parse_amc_url(url: str):
     theatre_match = re.search(r"/showtimes/all/[\d-]+/(\d+)", url)
     showtime_match = re.search(r"[?&]showtime[_-]?id[=:](\d+)", url, re.IGNORECASE)
     if not showtime_match:
